@@ -14,7 +14,7 @@ def main():
 
     print("\n=== PVC CUT LENGTH CALCULATOR ===\n")
     print("Supported connection types:", ", ".join(SUPPORTED_TYPES))
-    print("Enter sizes in inches (examples: 1, 1.5, 2, 2.5). Match the values used in your Database sheet.\n")
+    print("Enter sizes in inches (examples: 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8). Match the values used in your Database sheet.\n")
 
     type_a = prompt_nonempty("Connection Type A: ")
     size_a = prompt_nonempty("Connection Size A: ")
@@ -34,7 +34,7 @@ def main():
 
     print("\n--- RESULT ---")
     print(request)
-    print(f"\nFinal Cut Length = {cut_length:.4f} inches\n")
+    print(f"\nFinal Cut Length = {cut_length} inches\n")
 
 if __name__ == "__main__":
     main()
