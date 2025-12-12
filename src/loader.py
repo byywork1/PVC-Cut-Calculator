@@ -1,5 +1,6 @@
 import pandas as pd
-from .config import OFFSET_COLUMN_MAP, DEFAULT_OFFSET_COLUMN, SHEET_NAME
+from .config import OFFSET_COLUMN_MAP, DEFAULT_OFFSET_COLUMN, SHEET_NAME, OFFSET_COLUMN_G1, SUPPORTED_CONNECTOR_TYPES
+from fractions import Fraction
 
 class DimensionLoader:
     def __init__(self, excel_path: str):
@@ -7,6 +8,7 @@ class DimensionLoader:
         self.df = pd.read_excel(excel_path, sheet_name=SHEET_NAME)
         self._normalize_columns()
         self._validate_columns()
+        self._load_connector_map()
 
     def _normalize_columns(self):
         # Normalize column names: trim + collapse whitespace
@@ -36,56 +38,113 @@ class DimensionLoader:
             if offset_col not in self.df.columns:
                 raise ValueError(f"Offset column '{offset_col}' not found in sheet. Available columns: {list(self.df.columns)}")
 
+    def _load_connector_map(self):
+        """
+        Build a mapping of exact connector type names to database rows.
+        Creates a dict: {"Tee (SocketxSocketxSocket)": [row_data, ...], ...}
+        """
+        self.connector_map = {}
+        for conn_type in SUPPORTED_CONNECTOR_TYPES:
+            matching_rows = []
+            for idx, row in self.df.iterrows():
+                part_val = str(row[self.part_col]).strip()
+                if part_val == conn_type:
+                    matching_rows.append(row)
+            self.connector_map[conn_type] = matching_rows
+
     def _normalize_size_value(self, val):
-        # Normalize size values to a consistent string to match user input.
-        # Examples in sheet might be numeric 1.5 or "1-1/2" etc.
+        # Normalize size values to match user input.
+        # Can be numeric (1.5, 2, etc.) or text format (1.5x1.5x0.5, 2x2x1, etc.)
         if pd.isna(val):
             return ""
-        # If numeric, convert to string with no trailing .0 when integer-like
+        val_str = str(val).strip()
+        
+        # For text formats like "1.5x1.5x0.5", return as-is
+        if 'x' in val_str.lower():
+            return val_str.lower()
+        
+        # For numeric values, convert with no trailing .0 when integer-like
         try:
-            # pandas may return numpy types; cast to float first
-            v = float(val)
+            v = float(val_str)
             if v.is_integer():
                 return str(int(v))
             return str(v)
-        except Exception:
-            # fallback: strip whitespace from original string
-            return str(val).strip()
+        except ValueError:
+            return val_str.lower()
+
+    def _parse_offset_value(self, val):
+        """
+        Parse offset value which may be a float, int, or fraction string like '15/32'.
+        Returns float or raises ValueError.
+        """
+        if pd.isna(val):
+            return None
+        try:
+            # Try direct float conversion first
+            return float(val)
+        except (ValueError, TypeError):
+            # Try parsing as fraction string
+            try:
+                frac = Fraction(str(val).strip())
+                return float(frac)
+            except (ValueError, ZeroDivisionError):
+                raise ValueError(f"Cannot convert '{val}' to numeric offset")
 
     def get_offset(self, conn_type: str, conn_size: str) -> float:
         """
-        Find matching offset for a connection type & size.
-        Matching rules:
-          - conn_type matches (case-insensitive) any substring of the Part column
-          - conn_size matches normalized Size column value starting with the user's size input
-          - Uses offset column from OFFSET_COLUMN_MAP if defined for the part type, else DEFAULT_OFFSET_COLUMN
+        Find matching offset for an exact connector type and size.
+        
+        Args:
+            conn_type: Exact connector type from SUPPORTED_CONNECTOR_TYPES
+            conn_size: Numeric or text size to match exactly
+            
+        Returns:
+            float: The offset value from the database
+            
+        Raises:
+            ValueError: If connector type is not supported or no matching size found
         """
-        conn_type = conn_type.strip().lower()
-        conn_size = conn_size.strip().lower()
+        # Validate connector type exists in our supported list
+        if conn_type not in SUPPORTED_CONNECTOR_TYPES:
+            raise ValueError(
+                f"Unsupported connector type: '{conn_type}'. "
+                f"Supported types: {SUPPORTED_CONNECTOR_TYPES}"
+            )
 
         # Get the offset column for this connection type
-        offset_col = OFFSET_COLUMN_MAP.get(conn_type.capitalize(), DEFAULT_OFFSET_COLUMN)
+        offset_col = OFFSET_COLUMN_MAP.get(conn_type, DEFAULT_OFFSET_COLUMN)
 
-        # Build a mask of rows where Part contains the conn_type (case-insensitive)
-        matches = []
-        for _, row in self.df.iterrows():
-            part_val = str(row[self.part_col]).strip().lower()
+        # Normalize the size input for comparison
+        normalized_input_size = self._normalize_size_value(conn_size)
+
+        # Get rows that match this exact connector type
+        matching_rows = self.connector_map.get(conn_type, [])
+        if not matching_rows:
+            raise ValueError(
+                f"No database entries found for connector type '{conn_type}'"
+            )
+
+        # Find exact size match within the matching rows
+        for row in matching_rows:
             size_val_raw = row[self.size_col]
-            size_val = self._normalize_size_value(size_val_raw).lower()
+            normalized_db_size = self._normalize_size_value(size_val_raw)
 
-            # Check type match (substring)
-            if conn_type not in part_val:
-                continue
-
-            # Check size match (start-with match or exact)
-            if size_val.startswith(conn_size) or conn_size.startswith(size_val):
-                # ensure offset exists and is numeric
+            if normalized_db_size == normalized_input_size:
                 offset = row.get(offset_col)
                 if pd.notna(offset):
                     try:
-                        return float(offset)
-                    except Exception:
-                        raise ValueError(f"Found non-numeric offset '{offset}' for row: Part={row[self.part_col]}, Size={row[self.size_col]}")
-                # if offset is NaN, keep searching
-        # if loop finishes with no return:
-        raise ValueError(f"No matching entry found for Type='{conn_type}' and Size='{conn_size}' using column '{offset_col}' in sheet '{SHEET_NAME}'.")
+                        return self._parse_offset_value(offset)
+                    except ValueError:
+                        raise ValueError(
+                            f"Invalid offset value '{offset}' for {conn_type} Size={row[self.size_col]}"
+                        )
+
+        # No exact size match found
+        available_sizes = [
+            self._normalize_size_value(row[self.size_col]) 
+            for row in matching_rows
+        ]
+        raise ValueError(
+            f"No matching size '{conn_size}' for connector '{conn_type}'. "
+            f"Available sizes: {available_sizes}"
+        )
