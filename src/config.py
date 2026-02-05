@@ -38,6 +38,7 @@ CONNECTOR_SIZES = {
     ],
     "Elbow 90(Socket x Socket)": ["1.5", "2", "2.5", "3", "4", "5", "6", "8"],
     "Union (Socket x Socket)": ["1.5", "2", "2.5", "3", "4"],
+    "Tee (Socket x Socket x Socket)": ['1.25'],
 }
 
 # Offset columns by connector type
@@ -57,3 +58,12 @@ DEFAULT_OFFSET_COLUMN = "Offset"
 
 # Sheet name to read (explicit per your instruction)
 SHEET_NAME = "Database"
+
+# Connector image mapping for display
+CONNECTOR_IMAGE_MAP = {
+    "Tee (Socket x Socket x Socket)": "tee.png",
+    "Tee (Reducing)": "tee(reducing).png",
+    "Bushing (Spigot x Socket)": "bushing.png",
+    "Elbow 90(Socket x Socket)": "elbow.png",
+    "Union (Socket x Socket)": "union.png",
+}

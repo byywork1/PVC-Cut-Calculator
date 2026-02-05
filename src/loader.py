@@ -3,12 +3,14 @@ from .config import OFFSET_COLUMN_MAP, DEFAULT_OFFSET_COLUMN, SHEET_NAME, OFFSET
 from fractions import Fraction
 
 class DimensionLoader:
-    def __init__(self, excel_path: str):
+    def __init__(self, excel_path: str, session_offsets: dict = None):
         # read only the Database sheet, ignore others
         self.df = pd.read_excel(excel_path, sheet_name=SHEET_NAME)
         self._normalize_columns()
         self._validate_columns()
         self._load_connector_map()
+        # Store session offsets for newly added connectors (from session state)
+        self.session_offsets = session_offsets or {}
 
     def _normalize_columns(self):
         # Normalize column names: trim + collapse whitespace
@@ -95,17 +97,24 @@ class DimensionLoader:
         Find matching offset for an exact connector type and size.
         
         Args:
-            conn_type: Exact connector type from SUPPORTED_CONNECTOR_TYPES
+            conn_type: Exact connector type from SUPPORTED_CONNECTOR_TYPES or session
             conn_size: Numeric or text size to match exactly
             
         Returns:
-            float: The offset value from the database
+            float: The offset value from the database or session
             
         Raises:
             ValueError: If connector type is not supported or no matching size found
         """
-        # Validate connector type exists in our supported list
-        if conn_type not in SUPPORTED_CONNECTOR_TYPES:
+        # First, check session offsets for newly added connectors
+        offset_key = f"{conn_type}|{conn_size}"
+        if offset_key in self.session_offsets:
+            offset_data = self.session_offsets[offset_key]
+            if offset_data and 'offset' in offset_data:
+                return offset_data['offset']
+        
+        # Validate connector type exists in our supported list OR in connector_map
+        if conn_type not in SUPPORTED_CONNECTOR_TYPES and conn_type not in self.connector_map:
             raise ValueError(
                 f"Unsupported connector type: '{conn_type}'. "
                 f"Supported types: {SUPPORTED_CONNECTOR_TYPES}"
