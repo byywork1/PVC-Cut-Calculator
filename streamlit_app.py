@@ -48,32 +48,27 @@ def save_connector_to_excel(connector_type: str, sizes_list: list):
         st.error(f"Error saving to Excel: {e}")
         return False
 
-def update_config_py(connector_type: str, sizes_list: list, image_filename: str = None):
-    """Update src/config.py with new connector type, sizes, and optionally image mapping."""
+def add_new_connector_to_config(connector_type: str, sizes_list: list, image_filename: str = None):
+    """Add a completely new connector type to config.py."""
     try:
+        import re
         config_path = Path(__file__).parent / "src" / "config.py"
         
         with open(config_path, 'r') as f:
             content = f.read()
         
-        # Update SUPPORTED_CONNECTOR_TYPES
-        if f'"{connector_type}"' not in content:
-            # Find the SUPPORTED_CONNECTOR_TYPES list and add the new type
-            old_supported = 'SUPPORTED_CONNECTOR_TYPES = [\n    "Tee (Socket x Socket x Socket)",\n    "Tee (Reducing)",\n    "Bushing (Spigot x Socket)",\n    "Elbow 90(Socket x Socket)",\n    "Union (Socket x Socket)",\n]'
-            new_supported = f'SUPPORTED_CONNECTOR_TYPES = [\n    "Tee (Socket x Socket x Socket)",\n    "Tee (Reducing)",\n    "Bushing (Spigot x Socket)",\n    "Elbow 90(Socket x Socket)",\n    "Union (Socket x Socket)",\n    "{connector_type}",\n]'
-            content = content.replace(old_supported, new_supported)
+        # Add to SUPPORTED_CONNECTOR_TYPES
+        old_supported = 'SUPPORTED_CONNECTOR_TYPES = [\n    "Tee (Socket x Socket x Socket)",\n    "Tee (Reducing)",\n    "Bushing (Spigot x Socket)",\n    "Elbow 90(Socket x Socket)",\n    "Union (Socket x Socket)",\n]'
+        new_supported = f'SUPPORTED_CONNECTOR_TYPES = [\n    "Tee (Socket x Socket x Socket)",\n    "Tee (Reducing)",\n    "Bushing (Spigot x Socket)",\n    "Elbow 90(Socket x Socket)",\n    "Union (Socket x Socket)",\n    "{connector_type}",\n]'
+        content = content.replace(old_supported, new_supported)
         
-        # Update CONNECTOR_SIZES
+        # Add to CONNECTOR_SIZES
         sizes_str = str([s['size'] for s in sizes_list])
+        old_ending = '    "Union (Socket x Socket)": ["1.5", "2", "2.5", "3", "4"],\n}'
+        new_ending = f'    "Union (Socket x Socket)": ["1.5", "2", "2.5", "3", "4"],\n    "{connector_type}": {sizes_str},\n}}'
+        content = content.replace(old_ending, new_ending)
         
-        # Find where CONNECTOR_SIZES dict ends and add new entry
-        if f'"{connector_type}"' not in content or 'CONNECTOR_SIZES' in content:
-            # Add to CONNECTOR_SIZES dict
-            old_ending = '    "Union (Socket x Socket)": ["1.5", "2", "2.5", "3", "4"],\n}'
-            new_ending = f'    "Union (Socket x Socket)": ["1.5", "2", "2.5", "3", "4"],\n    "{connector_type}": {sizes_str},\n}}'
-            content = content.replace(old_ending, new_ending)
-        
-        # Update CONNECTOR_IMAGE_MAP if image provided
+        # Add to CONNECTOR_IMAGE_MAP if image provided
         if image_filename:
             old_image_ending = '    "Union (Socket x Socket)": "union.png",\n}'
             new_image_ending = f'    "Union (Socket x Socket)": "union.png",\n    "{connector_type}": "{image_filename}",\n}}'
@@ -84,49 +79,91 @@ def update_config_py(connector_type: str, sizes_list: list, image_filename: str 
         
         return True
     except Exception as e:
-        st.error(f"Error updating config.py: {e}")
+        st.error(f"Error adding new connector to config.py: {e}")
         return False
+
+def add_size_to_existing_connector_in_config(connector_type: str, new_size: str):
+    """Add a single size to an existing connector type in config.py."""
+    try:
+        import re
+        config_path = Path(__file__).parent / "src" / "config.py"
+        
+        with open(config_path, 'r') as f:
+            content = f.read()
+        
+        # Find the existing size list for this connector (escape special regex chars in connector_type)
+        escaped_type = re.escape(connector_type)
+        pattern = f'"{escaped_type}": \\[(.*?)\\]'
+        match = re.search(pattern, content, re.DOTALL)
+        
+        if match:
+            existing_str = match.group(1)
+            # Extract existing sizes
+            existing_sizes = [item.strip().strip('"').strip("'") for item in existing_str.split(',') if item.strip()]
+            
+            # Add new size if not already present
+            if new_size not in existing_sizes:
+                existing_sizes.append(new_size)
+            
+            # Reconstruct the size list
+            sizes_str = str(existing_sizes)
+            replacement = f'"{connector_type}": {sizes_str}'
+            content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+            
+            with open(config_path, 'w') as f:
+                f.write(content)
+            return True
+        else:
+            st.error(f"Connector type '{connector_type}' not found in config")
+            return False
+    except Exception as e:
+        st.error(f"Error adding size to connector in config.py: {e}")
+        return False
+
+def update_config_py(connector_type: str, sizes_list: list, image_filename: str = None):
+    """Update src/config.py with new connector type, sizes, and optionally image mapping.
+    
+    This is a wrapper that determines whether to add a new connector or update existing one.
+    """
+    from src.config import SUPPORTED_CONNECTOR_TYPES
+    
+    # Check if this is a new connector type
+    if connector_type not in SUPPORTED_CONNECTOR_TYPES:
+        # New connector - add all sizes at once
+        return add_new_connector_to_config(connector_type, sizes_list, image_filename)
+    else:
+        # Existing connector - add individual sizes
+        for size_data in sizes_list:
+            if not add_size_to_existing_connector_in_config(connector_type, size_data['size']):
+                return False
+        return True
 
 def delete_connector_image(connector_type: str):
     """Delete image file associated with a connector type from images/ folder."""
     try:
         from src.config import CONNECTOR_IMAGE_MAP
         
-        # Get the image filename from config
         image_filename = CONNECTOR_IMAGE_MAP.get(connector_type)
-        
         if image_filename:
-            images_dir = Path(__file__).parent / "images"
-            image_path = images_dir / image_filename
-            
-            # Delete the image file if it exists
+            image_path = Path(__file__).parent / "images" / image_filename
             if image_path.exists():
                 image_path.unlink()
-                return True
-        
-        # If no image mapping or file doesn't exist, still return True (not an error)
         return True
     except Exception as e:
         st.warning(f"Could not delete image file: {e}")
-        return True  # Still continue with deletion even if image delete fails
+        return True
 
 def delete_connector_from_excel(connector_type: str, size: str = None):
     """Delete connector type or specific size from Excel database."""
     try:
-        # Read existing Excel file
         df = pd.read_excel(EXCEL_PATH, sheet_name="Database")
-        
         if size:
-            # Delete specific size from connector type
             df = df[~((df['Part'] == connector_type) & (df['Size'] == size))]
         else:
-            # Delete entire connector type
             df = df[df['Part'] != connector_type]
         
-        # Save back to Excel
         with pd.ExcelWriter(EXCEL_PATH, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Database', index=False)
-        
         return True
     except Exception as e:
         st.error(f"Error deleting from Excel: {e}")
@@ -136,38 +173,20 @@ def delete_connector_from_config(connector_type: str, size: str = None):
     """Delete connector type or specific size from src/config.py."""
     try:
         config_path = Path(__file__).parent / "src" / "config.py"
-        
         with open(config_path, 'r') as f:
             content = f.read()
         
         if size:
-            # Remove specific size from CONNECTOR_SIZES
-            # Find the line with this size and remove it
             lines = content.split('\n')
-            new_lines = []
-            for line in lines:
-                if f'"{connector_type}"' in line and f'"{size}"' in line:
-                    # Skip this line - it's the connector type with this size
-                    continue
-                new_lines.append(line)
-            content = '\n'.join(new_lines)
+            content = '\n'.join([line for line in lines if not (f'"{connector_type}"' in line and f'"{size}"' in line)])
         else:
-            # Remove entire connector type from all lists
-            # Remove from SUPPORTED_CONNECTOR_TYPES
+            # Remove entire connector type from all config lists
             content = content.replace(f'    "{connector_type}",\n', '')
-            
-            # Remove from CONNECTOR_SIZES - remove the entire entry
-            import re
-            pattern = f'    "{connector_type}": .*?\n'
-            content = re.sub(pattern, '', content)
-            
-            # Remove from CONNECTOR_IMAGE_MAP if it exists
-            content = content.replace(f'    "{connector_type}": ".*?",\n', '')
+            content = re.sub(f'    "{connector_type}": .*?\n', '', content)
             content = re.sub(f'    "{connector_type}": "[^"]*",\n', '', content)
         
         with open(config_path, 'w') as f:
             f.write(content)
-        
         return True
     except Exception as e:
         st.error(f"Error updating config.py: {e}")
@@ -178,35 +197,52 @@ def save_image_to_folder(image_obj, filename: str):
     try:
         images_dir = Path(__file__).parent / "images"
         images_dir.mkdir(exist_ok=True)
-        
         file_path = images_dir / filename
         
-        # Handle PIL Image objects
         if isinstance(image_obj, Image.Image):
             image_obj.save(file_path)
-        # Handle Streamlit uploaded file objects
         else:
             with open(file_path, 'wb') as f:
                 f.write(image_obj.getvalue())
-        
         return True
     except Exception as e:
         st.error(f"Error saving image: {e}")
         return False
 
-# Helper function to display connector images
+def init_session_state():
+    """Initialize session state variables."""
+    if 'loader' not in st.session_state:
+        try:
+            st.session_state.loader = DimensionLoader(EXCEL_PATH)
+        except Exception as e:
+            st.error(f"Error loading database: {e}")
+            st.stop()
+    
+    if 'connector_types_modified' not in st.session_state:
+        st.session_state.connector_types_modified = list(SUPPORTED_CONNECTOR_TYPES)
+    
+    if 'connector_sizes_modified' not in st.session_state:
+        st.session_state.connector_sizes_modified = dict(CONNECTOR_SIZES)
+    
+    if 'connector_offsets' not in st.session_state:
+        st.session_state.connector_offsets = {}
+    
+    if 'jobs' not in st.session_state:
+        st.session_state.jobs = {}
+    
+    if 'current_job' not in st.session_state:
+        st.session_state.current_job = None
+
 def display_connector_image(connector_type: str, width: int = 150, flip: bool = False):
     """Display image for the selected connector type. Optionally flip the image horizontally."""
     from src.config import CONNECTOR_IMAGE_MAP
     
-    # First check if it's in the config map (which includes both standard and custom mappings)
     image_filename = CONNECTOR_IMAGE_MAP.get(connector_type)
     image_path = None
     
     if image_filename:
         image_path = Path(__file__).parent / "images" / image_filename
     
-    # If not found in map, try to find it dynamically in images/ folder by connector name
     if not image_path or not image_path.exists():
         images_dir = Path(__file__).parent / "images"
         if images_dir.exists():
@@ -218,15 +254,69 @@ def display_connector_image(connector_type: str, width: int = 150, flip: bool = 
     if image_path and image_path.exists():
         try:
             img = Image.open(image_path)
-            # Flip horizontally if requested
             if flip:
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
             st.image(img, caption=connector_type, width=width)
-        except Exception as e:
-            st.warning(f"Could not load image for {connector_type}")
-    else:
-        # Silently skip if no image found (don't show warning for custom connectors without images)
-        pass
+        except Exception:
+            pass
+
+def select_connector_pair(col1_label: str, col2_label: str, key_prefix: str):
+    """Helper function to select two connectors. Returns (type_a, size_a, type_b, size_b)."""
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"**{col1_label}**")
+        type_a = st.selectbox(
+            f"{col1_label} Type",
+            st.session_state.connector_types_modified,
+            key=f"{key_prefix}_type_a",
+            label_visibility="collapsed"
+        )
+        size_a = st.selectbox(
+            f"{col1_label} Size",
+            st.session_state.connector_sizes_modified.get(type_a, []),
+            key=f"{key_prefix}_size_a",
+            label_visibility="collapsed"
+        )
+        display_connector_image(type_a)
+    
+    with col2:
+        st.markdown(f"**{col2_label}**")
+        type_b = st.selectbox(
+            f"{col2_label} Type",
+            st.session_state.connector_types_modified,
+            key=f"{key_prefix}_type_b",
+            label_visibility="collapsed"
+        )
+        size_b = st.selectbox(
+            f"{col2_label} Size",
+            st.session_state.connector_sizes_modified.get(type_b, []),
+            key=f"{key_prefix}_size_b",
+            label_visibility="collapsed"
+        )
+        display_connector_image(type_b, flip=(type_b == "Elbow 90(Socket x Socket)"))
+    
+    return type_a, size_a, type_b, size_b
+
+def apply_image_edits(image: Image.Image, rotation: int = 0, flip_h: bool = False, flip_v: bool = False) -> Image.Image:
+    """Apply rotation and flip transformations to an image."""
+    edited = image.copy()
+    if rotation != 0:
+        edited = edited.rotate(rotation, expand=True)
+    if flip_h:
+        edited = edited.transpose(Image.FLIP_LEFT_RIGHT)
+    if flip_v:
+        edited = edited.transpose(Image.FLIP_TOP_BOTTOM)
+    return edited
+
+def init_image_editing_state():
+    """Initialize image editing state variables."""
+    if 'image_rotation' not in st.session_state:
+        st.session_state.image_rotation = 0
+    if 'image_flip_horizontal' not in st.session_state:
+        st.session_state.image_flip_horizontal = False
+    if 'image_flip_vertical' not in st.session_state:
+        st.session_state.image_flip_vertical = False
 
 # Page config
 st.set_page_config(
@@ -263,22 +353,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize session state
-if 'loader' not in st.session_state:
-    try:
-        st.session_state.loader = DimensionLoader(EXCEL_PATH)
-    except Exception as e:
-        st.error(f"Error loading database: {e}")
-        st.stop()
-
-# Initialize connector/size session state for cross-tab synchronization
-if 'connector_types_modified' not in st.session_state:
-    st.session_state.connector_types_modified = list(SUPPORTED_CONNECTOR_TYPES)
-
-if 'connector_sizes_modified' not in st.session_state:
-    st.session_state.connector_sizes_modified = dict(CONNECTOR_SIZES)
-
-if 'connector_offsets' not in st.session_state:
-    st.session_state.connector_offsets = {}
+init_session_state()
 
 # Update loader with session offsets
 loader = st.session_state.loader
@@ -298,43 +373,34 @@ with standard_tab:
     st.subheader("Standard Cut (Center-to-Center)")
     st.markdown("Calculate a single cut between two connectors.")
     
-    col1, col2 = st.columns(2)
+    type_a, size_a, type_b, size_b = select_connector_pair("Connection A", "Connection B", "std")
     
-    with col1:
-        st.markdown("**Connection A**")
-        type_a = st.selectbox(
-            "Connection Type A",
-            st.session_state.connector_types_modified,
-            key="std_type_a",
-            label_visibility="collapsed"
-        )
-        size_a = st.selectbox(
-            "Size A (inches)",
-            st.session_state.connector_sizes_modified.get(type_a, []),
-            key="std_size_a",
-            label_visibility="collapsed",
-            help="Select the connector size"
-        )
-        # Display image for type_a
-        display_connector_image(type_a)
+    # Stab selection for Tee (Reducing)
+    use_g1_a = False
+    use_g1_b = False
     
-    with col2:
-        st.markdown("**Connection B**")
-        type_b = st.selectbox(
-            "Connection Type B",
-            st.session_state.connector_types_modified,
-            key="std_type_b",
-            label_visibility="collapsed"
-        )
-        size_b = st.selectbox(
-            "Size B (inches)",
-            st.session_state.connector_sizes_modified.get(type_b, []),
-            key="std_size_b",
-            label_visibility="collapsed",
-            help="Select the connector size"
-        )
-        # Display image for type_b (flip if Elbow 90)
-        display_connector_image(type_b, flip=(type_b == "Elbow 90(Socket x Socket)"))
+    if type_a == "Tee (Reducing)" or type_b == "Tee (Reducing)":
+        st.markdown("**Tee (Reducing) Configuration**")
+        
+        if type_a == "Tee (Reducing)":
+            st.markdown("**Connection A - Tee (Reducing)**")
+            stab_option_a = st.radio(
+                "Select stab type for Connection A:",
+                ["(1) Horizontal Stab", "(2) Vertical Stab"],
+                key="std_stab_a",
+                horizontal=True
+            )
+            use_g1_a = stab_option_a == "(2) Vertical Stab"
+        
+        if type_b == "Tee (Reducing)":
+            st.markdown("**Connection B - Tee (Reducing)**")
+            stab_option_b = st.radio(
+                "Select stab type for Connection B:",
+                ["(1) Horizontal Stab", "(2) Vertical Stab"],
+                key="std_stab_b",
+                horizontal=True
+            )
+            use_g1_b = stab_option_b == "(2) Vertical Stab"
     
     # Measurement inputs
     st.markdown("**Measurement**")
@@ -364,7 +430,9 @@ with standard_tab:
                 size_a,
                 type_b,
                 size_b,
-                c2c
+                c2c,
+                use_g1_for_type_a=use_g1_a,
+                use_g1_for_type_b=use_g1_b
             )
             
             if include_shave:
@@ -545,12 +613,10 @@ with bushing_tab:
             key="bush_size_a",
             label_visibility="collapsed"
         )
-        # Display image for type_a
         display_connector_image(type_a)
     
     with col2:
         st.markdown("**Bushing**")
-        # Bushing is always "Bushing (Spigot x Socket)"
         type_bushing = "Bushing (Spigot x Socket)"
         st.markdown("Type: Bushing (Spigot x Socket)")
         size_bushing = st.selectbox(
@@ -559,7 +625,6 @@ with bushing_tab:
             key="bush_size_bushing",
             label_visibility="collapsed"
         )
-        # Display image for bushing
         display_connector_image(type_bushing)
     
     with col3:
@@ -576,7 +641,6 @@ with bushing_tab:
             key="bush_size_b",
             label_visibility="collapsed"
         )
-        # Display image for type_b (flip if Elbow 90)
         display_connector_image(type_b, flip=(type_b == "Elbow 90(Socket x Socket)"))
     
     # Bushing specific measurements
@@ -727,6 +791,33 @@ with jobs_tab:
                 # Display image for job_type_b (flip if Elbow 90)
                 display_connector_image(job_type_b, width=120, flip=(job_type_b == "Elbow 90(Socket x Socket)"))
             
+            # Stab selection for Tee (Reducing)
+            job_use_g1_a = False
+            job_use_g1_b = False
+            
+            if job_type_a == "Tee (Reducing)" or job_type_b == "Tee (Reducing)":
+                st.markdown("**Tee (Reducing) Configuration**")
+                
+                if job_type_a == "Tee (Reducing)":
+                    st.markdown("**Connection A - Tee (Reducing)**")
+                    job_stab_option_a = st.radio(
+                        "Select stab type for Connection A:",
+                        ["(1) Horizontal Stab", "(2) Vertical Stab"],
+                        key="job_std_stab_a",
+                        horizontal=True
+                    )
+                    job_use_g1_a = job_stab_option_a == "(2) Vertical Stab"
+                
+                if job_type_b == "Tee (Reducing)":
+                    st.markdown("**Connection B - Tee (Reducing)**")
+                    job_stab_option_b = st.radio(
+                        "Select stab type for Connection B:",
+                        ["(1) Horizontal Stab", "(2) Vertical Stab"],
+                        key="job_std_stab_b",
+                        horizontal=True
+                    )
+                    job_use_g1_b = job_stab_option_b == "(2) Vertical Stab"
+            
             job_c2c = st.number_input(
                 "Center-to-Center (inches)",
                 min_value=0.0,
@@ -746,7 +837,9 @@ with jobs_tab:
                         job_size_a,
                         job_type_b,
                         job_size_b,
-                        job_c2c
+                        job_c2c,
+                        use_g1_for_type_a=job_use_g1_a,
+                        use_g1_for_type_b=job_use_g1_b
                     )
                     
                     if job_shave:
@@ -1150,26 +1243,13 @@ with manage_tab:
             
             if uploaded_image is not None:
                 # Initialize image editing state
-                if 'image_rotation' not in st.session_state:
-                    st.session_state.image_rotation = 0
-                if 'image_flip_horizontal' not in st.session_state:
-                    st.session_state.image_flip_horizontal = False
-                if 'image_flip_vertical' not in st.session_state:
-                    st.session_state.image_flip_vertical = False
+                init_image_editing_state()
                 
-                # Load and display image with edits
+                # Load and apply edits
                 image_pil = Image.open(uploaded_image)
-                edited_image = image_pil.copy()
-                
-                # Apply rotations
-                if st.session_state.image_rotation != 0:
-                    edited_image = edited_image.rotate(st.session_state.image_rotation, expand=True)
-                
-                # Apply flips
-                if st.session_state.image_flip_horizontal:
-                    edited_image = edited_image.transpose(Image.FLIP_LEFT_RIGHT)
-                if st.session_state.image_flip_vertical:
-                    edited_image = edited_image.transpose(Image.FLIP_TOP_BOTTOM)
+                edited_image = apply_image_edits(image_pil, st.session_state.image_rotation, 
+                                                 st.session_state.image_flip_horizontal, 
+                                                 st.session_state.image_flip_vertical)
                 
                 col1, col2 = st.columns([1, 2])
                 with col1:
@@ -1343,19 +1423,10 @@ with manage_tab:
                             
                             # Store image if uploaded
                             if uploaded_image is not None and final_filename:
-                                # Get the edited image
                                 image_pil = Image.open(uploaded_image)
-                                edited_image = image_pil.copy()
-                                
-                                # Apply rotations
-                                if st.session_state.image_rotation != 0:
-                                    edited_image = edited_image.rotate(st.session_state.image_rotation, expand=True)
-                                
-                                # Apply flips
-                                if st.session_state.image_flip_horizontal:
-                                    edited_image = edited_image.transpose(Image.FLIP_LEFT_RIGHT)
-                                if st.session_state.image_flip_vertical:
-                                    edited_image = edited_image.transpose(Image.FLIP_TOP_BOTTOM)
+                                edited_image = apply_image_edits(image_pil, st.session_state.image_rotation,
+                                                                 st.session_state.image_flip_horizontal,
+                                                                 st.session_state.image_flip_vertical)
                                 
                                 if save_image_to_folder(edited_image, final_filename):
                                     if 'connector_images' not in st.session_state:
