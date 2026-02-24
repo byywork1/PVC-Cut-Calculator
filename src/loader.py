@@ -1,5 +1,5 @@
 import pandas as pd
-from .config import OFFSET_COLUMN_MAP, DEFAULT_OFFSET_COLUMN, SHEET_NAME, OFFSET_COLUMN_G1, SUPPORTED_CONNECTOR_TYPES
+from .config import OFFSET_COLUMN, SHEET_NAME, OFFSET_COLUMN_G1, SUPPORTED_CONNECTOR_TYPES
 from fractions import Fraction
 
 class DimensionLoader:
@@ -34,11 +34,9 @@ class DimensionLoader:
         self.part_col = found_part
         self.size_col = found_size
 
-        # Validate that all offset columns exist in the sheet
-        all_offset_cols = set(OFFSET_COLUMN_MAP.values()) | {DEFAULT_OFFSET_COLUMN}
-        for offset_col in all_offset_cols:
-            if offset_col not in self.df.columns:
-                raise ValueError(f"Offset column '{offset_col}' not found in sheet. Available columns: {list(self.df.columns)}")
+        # Validate that offset columns exist in the sheet
+        if OFFSET_COLUMN not in self.df.columns:
+            raise ValueError(f"Offset column '{OFFSET_COLUMN}' not found in sheet. Available columns: {list(self.df.columns)}")
 
     def _load_connector_map(self):
         """
@@ -121,7 +119,7 @@ class DimensionLoader:
             )
 
         # Get the offset column for this connection type
-        offset_col = OFFSET_COLUMN_MAP.get(conn_type, DEFAULT_OFFSET_COLUMN)
+        offset_col = OFFSET_COLUMN
 
         # Normalize the size input for comparison
         normalized_input_size = self._normalize_size_value(conn_size)
@@ -157,3 +155,62 @@ class DimensionLoader:
             f"No matching size '{conn_size}' for connector '{conn_type}'. "
             f"Available sizes: {available_sizes}"
         )
+
+    def get_offset_g1(self, conn_type: str, conn_size: str) -> float:
+        """
+        Find matching G1 offset for an exact connector type and size.
+        
+        Args:
+            conn_type: Exact connector type from SUPPORTED_CONNECTOR_TYPES or session
+            conn_size: Numeric or text size to match exactly
+            
+        Returns:
+            float: The G1 offset value from the database or session, or None if not available
+            
+        Raises:
+            ValueError: If connector type is not supported or no matching size found
+        """
+        # First, check session offsets for newly added connectors
+        offset_key = f"{conn_type}|{conn_size}"
+        if offset_key in self.session_offsets:
+            offset_data = self.session_offsets[offset_key]
+            if offset_data and 'g1_offset' in offset_data:
+                g1_value = offset_data['g1_offset']
+                if g1_value and g1_value > 0:
+                    return g1_value
+        
+        # Validate connector type exists in our supported list OR in connector_map
+        if conn_type not in SUPPORTED_CONNECTOR_TYPES and conn_type not in self.connector_map:
+            raise ValueError(
+                f"Unsupported connector type: '{conn_type}'. "
+                f"Supported types: {SUPPORTED_CONNECTOR_TYPES}"
+            )
+
+        # Normalize the size input for comparison
+        normalized_input_size = self._normalize_size_value(conn_size)
+
+        # Get rows that match this exact connector type
+        matching_rows = self.connector_map.get(conn_type, [])
+        if not matching_rows:
+            raise ValueError(
+                f"No database entries found for connector type '{conn_type}'"
+            )
+
+        # Find exact size match within the matching rows
+        for row in matching_rows:
+            size_val_raw = row[self.size_col]
+            normalized_db_size = self._normalize_size_value(size_val_raw)
+
+            if normalized_db_size == normalized_input_size:
+                # Try to get G1 offset column if it exists
+                if OFFSET_COLUMN_G1 in self.df.columns:
+                    g1_offset = row.get(OFFSET_COLUMN_G1)
+                    if pd.notna(g1_offset):
+                        try:
+                            return self._parse_offset_value(g1_offset)
+                        except ValueError:
+                            return None
+                return None
+
+        # No exact size match found
+        return None

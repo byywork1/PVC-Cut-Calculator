@@ -16,7 +16,7 @@ SUPPORTED_CONNECTOR_TYPES = [
 
 # Available sizes for each connector type (from database)
 CONNECTOR_SIZES = {
-    "Tee (Socket x Socket x Socket)": ["1.5", "2", "2.5", "3", "4", "5", "6", "8"],
+    "Tee (Socket x Socket x Socket)": ['1.5', '2', '2.5', '3', '4', '5', '6', '8', '1.25'],
     "Tee (Reducing)": [
         "1.5x1.5x0.5", "1.5x1.5x0.75", "1.5x1.5x1", "1.5x1.5x1.25",
         "2x2x0.5", "2x2x0.75", "2x2x1", "2x2x1.25", "2x2x1.5", "2x2x4",
@@ -38,23 +38,11 @@ CONNECTOR_SIZES = {
     ],
     "Elbow 90(Socket x Socket)": ["1.5", "2", "2.5", "3", "4", "5", "6", "8"],
     "Union (Socket x Socket)": ["1.5", "2", "2.5", "3", "4"],
-    "Tee (Socket x Socket x Socket)": ['1.25'],
 }
 
-# Offset columns by connector type
-OFFSET_COLUMN_MAP = {
-    "Tee (Socket x Socket x Socket)": "Offset",
-    "Tee (Reducing)": "Offset",
-    "Bushing (Spigot x Socket)": "Offset",
-    "Elbow 90(Socket x Socket)": "Offset",
-    "Union (Socket x Socket)": "Offset",
-}
-
-# Alternative offset column (G1) - used for secondary offset when available
+# Offset columns - all connectors use "Offset" as primary, "Offset (G1)" as secondary
+OFFSET_COLUMN = "Offset"
 OFFSET_COLUMN_G1 = "Offset (G1)"
-
-# Default offset column if part type not found in map
-DEFAULT_OFFSET_COLUMN = "Offset"
 
 # Sheet name to read (explicit per your instruction)
 SHEET_NAME = "Database"
